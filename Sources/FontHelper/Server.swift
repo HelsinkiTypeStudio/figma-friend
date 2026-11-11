@@ -133,7 +133,7 @@ final class Server {
 
         switch (method, path) {
         case ("GET", "/ping"):
-            return json(conn, ["ok": true, "app": "Font Helper", "version": Settings.version, "paired": paired])
+            return json(conn, ["ok": true, "app": "Figma Friend", "version": Settings.version, "paired": paired])
         case ("POST", "/pair"):
             return pair(conn, body)
         default:

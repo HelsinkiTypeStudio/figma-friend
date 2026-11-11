@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum Dialogs {
-    /// Asks whether a plugin may use Font Helper. Websites can reach localhost too,
+    /// Asks whether a plugin may use Figma Friend. Websites can reach localhost too,
     /// so the key is only handed out after you say yes.
     static func askToPair(plugin: String, completion: @escaping (Bool) -> Void) {
         DispatchQueue.main.async {

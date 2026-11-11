@@ -1,6 +1,6 @@
-# Font Helper
+# Figma Friend
 
-A small menu bar app that lets Figma plugins use the fonts installed on your Mac. Figma gives plugins only font names, never the files, and a plugin can't read your disk. Font Helper fills that gap.
+A small menu bar app that lets Figma plugins use the fonts installed on your Mac. Figma gives plugins only font names, never the files, and a plugin can't read your disk. Figma Friend fills that gap.
 
 It is made for [figma-export-pdf](https://github.com/HelsinkiTypeStudio/figma-export-pdf), which writes real, selectable text into PDFs in your own fonts. Later it can also serve Test Font Reloader.
 
@@ -19,21 +19,21 @@ cd font-helper
 scripts/build-app.sh --install
 ```
 
-This builds **Font Helper.app**, copies it to /Applications and starts it. The first build downloads fontTools into a private folder inside `build/`; your own Python is not touched. Look for the text icon in the menu bar. Choose **Open at Login** there to keep it running.
+This builds **Figma Friend.app**, copies it to /Applications and starts it. The first build downloads fontTools into a private folder inside `build/`; your own Python is not touched. Look for **FF** in the menu bar. Choose **Open at Login** there to keep it running.
 
 ## Using it
 
-The first time a plugin connects, Font Helper asks whether to allow it. After that the plugin remembers its key.
+The first time a plugin connects, Figma Friend asks whether to allow it. After that the plugin remembers its key.
 
 The menu has:
 
 - **Copy Pairing Key**, for a plugin that asks you to paste it.
 - **Unpair All Plugins**, which makes a new key, so every plugin has to ask again.
-- **Show Log**, which opens `~/Library/Logs/Font Helper.log`.
+- **Show Log**, which opens `~/Library/Logs/Figma Friend.log`.
 
 ## Security
 
-Font Helper only listens on 127.0.0.1, so nothing on your network can reach it. Web pages in your browser can reach localhost, so every request except `/ping` and `/pair` needs the pairing key, and a key is only handed out after you click Allow. Only allow a request you just started from Figma.
+Figma Friend only listens on 127.0.0.1, so nothing on your network can reach it. Web pages in your browser can reach localhost, so every request except `/ping` and `/pair` needs the pairing key, and a key is only handed out after you click Allow. Only allow a request you just started from Figma.
 
 ## For plugin developers
 
@@ -41,7 +41,7 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 
 | Request | Answer |
 | --- | --- |
-| `GET /ping` | `{"ok": true, "app": "Font Helper", "version", "paired"}` |
+| `GET /ping` | `{"ok": true, "app": "Figma Friend", "version", "paired"}` |
 | `POST /pair` with `{"plugin": "Name"}` | Shows the Allow dialog. `{"key"}`, or 403 if declined |
 | `GET /fonts/files?family=&style=` | The installed files for a family, exact style first |
 | `POST /fonts/prepare` | The font check and subset font, below |

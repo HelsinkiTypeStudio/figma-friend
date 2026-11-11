@@ -1,6 +1,6 @@
-"""Font work for Font Helper: fix variable fonts, check glyphs, subset.
+"""Font work for Figma Friend: fix variable fonts, check glyphs, subset.
 
-Font Helper runs this as a long-lived process. Each request is one JSON line on stdin,
+Figma Friend runs this as a long-lived process. Each request is one JSON line on stdin,
 and each answer is one JSON line on stdout. The font file is read fresh for every request.
 
 Request:

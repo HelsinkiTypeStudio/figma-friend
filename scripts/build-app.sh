@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds "Font Helper.app" in ./build and, with --install, copies it to /Applications.
+# Builds "Figma Friend.app" in ./build and, with --install, copies it to /Applications.
 #
 # Needs: Xcode Command Line Tools (for swift and python3). Internet the first time,
 # to fetch fontTools and PyInstaller into a private build folder. Nothing is installed
@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="build/Font Helper.app"
+APP="build/Figma Friend.app"
 VERSION=$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/FontHelper/Settings.swift)
 
 # Prefer a newer Python if one is installed; the Command Line Tools one (3.9) also works.
@@ -46,12 +46,14 @@ codesign --force --deep --sign - "$APP"
 
 if [ "${1:-}" = "--install" ]; then
   echo "==> Installing to /Applications"
+  osascript -e 'quit app "Figma Friend"' >/dev/null 2>&1 || true
+  # Its earlier name: quit it and take it out, so the two don't fight over the port.
   osascript -e 'quit app "Font Helper"' >/dev/null 2>&1 || true
   sleep 1
-  rm -rf "/Applications/Font Helper.app"
-  cp -R "$APP" "/Applications/Font Helper.app"
-  open "/Applications/Font Helper.app"
-  echo "Font Helper $VERSION is running. Look for the text icon in the menu bar."
+  rm -rf "/Applications/Figma Friend.app" "/Applications/Font Helper.app"
+  cp -R "$APP" "/Applications/Figma Friend.app"
+  open "/Applications/Figma Friend.app"
+  echo "Figma Friend $VERSION is running. Look for FF in the menu bar."
 else
   echo "Built $APP ($VERSION). Run scripts/build-app.sh --install to put it in /Applications and start it."
 fi

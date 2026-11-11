@@ -1,11 +1,11 @@
 import Foundation
 
-/// Appends lines to ~/Library/Logs/Font Helper.log (and prints them when run from Terminal).
+/// Appends lines to ~/Library/Logs/Figma Friend.log (and prints them when run from Terminal).
 enum Log {
     static let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("Font Helper.log")
+        return dir.appendingPathComponent("Figma Friend.log")
     }()
 
     private static let queue = DispatchQueue(label: "log")

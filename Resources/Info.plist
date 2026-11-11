@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Font Helper</string>
+    <string>Figma Friend</string>
     <key>CFBundleDisplayName</key>
-    <string>Font Helper</string>
+    <string>Figma Friend</string>
     <key>CFBundleIdentifier</key>
     <string>com.helsinkitypestudio.fonthelper</string>
     <key>CFBundleExecutable</key>
