@@ -30,20 +30,33 @@ final class Server {
             l.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready: self?.setStatus("Running on port \(Settings.port)")
-                case .failed(let e): self?.setStatus("Could not start: \(e)")
+                case .failed(let e): self?.failed(e)
                 default: break
                 }
             }
             l.start(queue: .main)
             listener = l
         } catch {
-            setStatus("Could not start: \(error)")
+            setStatus("Could not start: \(error). Trying again…")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.start() }
         }
     }
 
+    /// Port taken (often an older copy or a test helper still running): say so and try again shortly.
+    private func failed(_ e: NWError) {
+        listener?.cancel()
+        listener = nil
+        if case .posix(let code) = e, code == .EADDRINUSE {
+            setStatus("Port \(Settings.port) is in use by another app. Trying again…")
+        } else {
+            setStatus("Could not start (\(e)). Trying again…")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.start() }
+    }
+
     private func setStatus(_ s: String) {
+        if s != status { Log.write(s) }   // don't fill the log while retrying
         status = s
-        Log.write(s)
         onStatus?(s)
     }
 
