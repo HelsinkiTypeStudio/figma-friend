@@ -56,6 +56,11 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 
 `w` is the advance width and `llx`, `lly`, `urx` the left, bottom and right edges of the glyph's box, as Figma records them. The top edge is left out, because Figma's value isn't the glyph's top. The answer has a font program (`format` `TrueType` or `CFF`, base64 in `font`) and, for each glyph in the same order, a `gid` or `null` with the reason. See [Resources/fontwork.py](Resources/fontwork.py) for the details.
 
+## Roadmap
+
+- **Proofs.** A Figma plugin that stamps each proof with the font file it was set in: build version and date. Every proof then shows which build it is.
+- **Glyph lists.** A plugin that asks Figma Friend for a font's full character set and lays it out in Figma for proofing.
+
 ## Development
 
 ```sh
