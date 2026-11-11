@@ -45,6 +45,7 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 | `POST /pair` with `{"plugin": "Name"}` | Shows the Allow dialog. `{"key"}`, or 403 if declined |
 | `GET /fonts/files?family=&style=` | The installed files for a family, exact style first |
 | `POST /fonts/prepare` | The font check and subset font, below |
+| `POST /fonts/charset` with `{"family", "style"}` | Every character the installed font maps, grouped for a glyph list (uppercase, lowercase, accented, figures, punctuation and so on), with the file's path, version and date, and how many glyphs have no Unicode value |
 | `POST /save?name=Name.pdf` with the file as the body | Shows a save dialog in the last folder used. While it is open, a PDF is made smaller with [PDF Compressor](https://github.com/niklas-ekholm/pdf-compressor)'s method (images at 220 ppi at the size shown, shorter path numbers, best lossless compression; text and fonts untouched). Turn it off with **Make Saved PDFs Smaller** in the menu. `{"saved": path, "bytes", "sentBytes"}` or `{"cancelled": true}` |
 
 `/fonts/prepare` takes the glyphs from the hidden text layer of Figma's own PDF export, in em:
@@ -59,7 +60,7 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 ## Roadmap
 
 - **Proofs.** A Figma plugin that stamps each proof with the font file it was set in: build version and date. Every proof then shows which build it is.
-- **Glyph lists.** A plugin that asks Figma Friend for a font's full character set and lays it out in Figma for proofing.
+- **Glyph lists.** A plugin that asks Figma Friend for a font's full character set and lays it out in Figma for proofing. Figma Friend's part, `/fonts/charset`, is in place.
 
 ## Development
 
