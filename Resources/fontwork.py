@@ -24,8 +24,19 @@ Answer:
   can carry each character separately. For TrueType the ids are glyph ids in the subset
   font. For CFF the font is built so that each matched entry has its own glyph, and the
   id is both its glyph id and its CID.
+
+Request:
+  {"id": 2, "op": "charset", "candidates": [{"path": ..., "fontNumber": 0}, ...]}
+
+Answer (for glyph lists): every character the first readable file maps, grouped for proofing.
+  {"id": 2, "ok": true, "path": ..., "familyName", "styleName", "version", "modified": <unix time>,
+   "totalGlyphs": 545, "mappedGlyphs": 467, "unmappedGlyphs": 78, "skipped": [codepoints],
+   "groups": [{"label": "Uppercase", "codepoints": [65, 66, ...]}, ...]}
+
+  Glyphs without a Unicode value (alternates, .ss01) can't be typed, so they are only counted.
+  Invisible codepoints (controls, private use, line and paragraph separators) are skipped.
 """
-import sys, json, base64, io, traceback, unicodedata
+import sys, os, json, base64, io, traceback, unicodedata
 
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
@@ -275,6 +286,82 @@ def prepare(req):
     return out
 
 
+# Glyph lists: groups in proofing order, as (label, general categories, letter kind).
+SKIPPED_CATEGORIES = {"Cc", "Cf", "Co", "Cs", "Zl", "Zp"}
+BASIC_LATIN = set(range(0x41, 0x5B)) | set(range(0x61, 0x7B))
+CHARSET_GROUPS = [
+    ("Uppercase", {"Lu", "Lt"}, "basic"),
+    ("Uppercase, other letters", {"Lu", "Lt"}, "plain"),
+    ("Uppercase, accented", {"Lu", "Lt"}, "accented"),
+    ("Lowercase", {"Ll"}, "basic"),
+    ("Lowercase, other letters", {"Ll"}, "plain"),
+    ("Lowercase, accented", {"Ll"}, "accented"),
+    ("Other letters", {"Lm", "Lo"}, None),
+    ("Figures", {"Nd"}, None),
+    ("Fractions and other numbers", {"No", "Nl"}, None),
+    ("Punctuation", {"Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"}, None),
+    ("Currency", {"Sc"}, None),
+    ("Math", {"Sm"}, None),
+    ("Symbols", {"So"}, None),
+    ("Accents", {"Sk"}, None),
+    ("Combining accents", {"Mn", "Mc", "Me"}, None),
+    ("Spaces", {"Zs"}, None),
+]
+
+
+def letter_kind(cp):
+    """basic (A-Z, a-z), accented (decomposes to a letter plus accents) or plain (Ø, Æ, Þ, ß)."""
+    if cp in BASIC_LATIN:
+        return "basic"
+    d = unicodedata.normalize("NFD", chr(cp))
+    if len(d) > 1 and all(unicodedata.category(c).startswith("M") for c in d[1:]):
+        return "accented"
+    return "plain"
+
+
+def charset(req):
+    """Every character a font maps, grouped. The first file that can be read is used:
+    Figma Friend lists the exact family-and-style match first."""
+    errors = []
+    for c in req.get("candidates") or []:
+        try:
+            font = TTFont(c["path"], fontNumber=int(c.get("fontNumber", 0)), lazy=True)
+            cmap = font.getBestCmap() or {}
+            order = font.getGlyphOrder()
+        except Exception as e:
+            errors.append(f"{c['path']}: {type(e).__name__}: {e}")
+            continue
+        by_cat, skipped = {}, []
+        for cp in sorted(cmap):
+            cat = unicodedata.category(chr(cp))
+            if cat in SKIPPED_CATEGORIES:
+                skipped.append(cp)
+            else:
+                by_cat.setdefault(cat, []).append(cp)
+        groups, claimed = [], set()
+        for label, cats, kind in CHARSET_GROUPS:
+            cps = sorted(cp for cat in cats for cp in by_cat.get(cat, []) if not kind or letter_kind(cp) == kind)
+            claimed |= cats
+            if cps:
+                groups.append({"label": label, "codepoints": cps})
+        # Anything else (codepoints newer than this Python's Unicode data, say) still shows up.
+        rest = sorted(cp for cat, cps in by_cat.items() if cat not in claimed for cp in cps)
+        if rest:
+            groups.append({"label": "Other", "codepoints": rest})
+        mapped = set(cmap.values())
+        name = font["name"]
+        return {"ok": True, "path": c["path"],
+                "familyName": name.getDebugName(16) or name.getDebugName(1),
+                "styleName": name.getDebugName(17) or name.getDebugName(2),
+                "version": name.getDebugName(5),
+                "modified": int(os.path.getmtime(c["path"])),
+                "totalGlyphs": len(order),
+                "mappedGlyphs": len(mapped),
+                "unmappedGlyphs": sum(1 for g in order if g not in mapped and g != ".notdef"),
+                "skipped": skipped, "groups": groups}
+    return {"ok": False, "error": "no candidate file could be read", "tried": errors}
+
+
 def main():
     for line in sys.stdin:
         line = line.strip()
@@ -286,6 +373,8 @@ def main():
             rid = req.get("id")
             if req.get("op") == "prepare":
                 ans = prepare(req)
+            elif req.get("op") == "charset":
+                ans = charset(req)
             elif req.get("op") == "ping":
                 import fontTools
                 ans = {"ok": True, "fontTools": fontTools.version, "python": sys.version.split()[0]}

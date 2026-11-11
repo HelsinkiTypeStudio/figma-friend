@@ -11,6 +11,8 @@ import Network
 ///   GET  /fonts/files?family=&style=   the installed files for a font (for the report)
 ///   POST /fonts/prepare        body {"family", "style", "axes", "glyphs"}: the font check and
 ///                              subset font, see Resources/fontwork.py
+///   POST /fonts/charset        body {"family", "style"}: every character the font maps, grouped
+///                              for a glyph list, see Resources/fontwork.py
 ///   POST /save?name=           body: the file. Shows a save dialog; a PDF is made smaller meanwhile
 ///                              (menu setting). {"saved": path, "bytes", "sentBytes"} or {"cancelled": true}
 final class Server {
@@ -151,6 +153,8 @@ final class Server {
             json(conn, ["family": family, "style": style, "files": FontLookup.candidates(family: family, style: style)])
         case ("POST", "/fonts/prepare"):
             prepare(conn, body)
+        case ("POST", "/fonts/charset"):
+            charset(conn, body)
         case ("POST", "/save"):
             save(conn, name: query["name"] ?? "Untitled.pdf", data: body)
         default:
@@ -204,6 +208,31 @@ final class Server {
             case .failure(let e):
                 Log.write("could not prepare \(family) \(style): \(e)")
                 self?.json(conn, ["ok": false, "error": "\(e)"], "500 Internal Server Error")
+            }
+        }
+    }
+
+    /// Every character the installed font maps, for a glyph list. Read fresh from the file.
+    private func charset(_ conn: NWConnection, _ body: Data) {
+        guard let req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let family = req["family"] as? String, let style = req["style"] as? String
+        else { return json(conn, ["error": "family and style are required"], "400 Bad Request") }
+
+        let files = FontLookup.candidates(family: family, style: style)
+        if files.isEmpty {
+            Log.write("not installed: \(family) \(style)")
+            return json(conn, ["ok": false, "error": "not installed", "family": family, "style": style])
+        }
+        Worker.shared.ask(["op": "charset", "candidates": files]) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let data):
+                    Log.write("listed the characters of \(family) \(style)")
+                    self?.reply(conn, "200 OK", "application/json", data)
+                case .failure(let e):
+                    Log.write("could not list the characters of \(family) \(style): \(e)")
+                    self?.json(conn, ["ok": false, "error": "\(e)"], "500 Internal Server Error")
+                }
             }
         }
     }
