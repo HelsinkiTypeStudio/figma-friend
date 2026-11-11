@@ -14,7 +14,8 @@ Request:
 
 Answer:
   {"id": 1, "ok": true, "path": "<the file used>", "format": "TrueType" | "CFF", "font": "<base64>",
-   "glyphs": [{"gid": 5, "how": "char"} | {"gid": null, "how": "no match", "diff": 0.004}, ...],
+   "glyphs": [{"gid": 5, "how": "char", "box": [xMin, yMin, xMax, yMax] in em} |
+              {"gid": null, "how": "no match", "diff": 4.2 (font units)}, ...],
    "postScriptName": ..., "upm": ..., "ascent": ..., "descent": ..., "capHeight": ...,
    "italicAngle": ..., "bbox": [...], "fixedPitch": false, "serif": false}
 
@@ -186,6 +187,11 @@ def check(path, font_number, axes, figs):
         r = {"how": how}
         if d is not None:
             r["diff"] = round(d * upm, 3)
+        if g is not None:
+            # The glyph's box in em, top edge included, so the exporter can tell which
+            # outlines in Figma's PDF belong to it.
+            bb = metrics[g][1]
+            r["box"] = [round(v, 6) for v in bb] if bb else None
         results.append(r)
     return font, results, names
 
