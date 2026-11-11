@@ -5,6 +5,7 @@ let package = Package(
     name: "FontHelper",
     platforms: [.macOS(.v13)],
     targets: [
-        .executableTarget(name: "FontHelper", path: "Sources/FontHelper")
+        .target(name: "CZlib", linkerSettings: [.linkedLibrary("z")]),
+        .executableTarget(name: "FontHelper", dependencies: ["CZlib"], path: "Sources/FontHelper"),
     ]
 )

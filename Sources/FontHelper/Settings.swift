@@ -22,6 +22,12 @@ enum Settings {
         return k
     }
 
+    /// Make saved PDFs smaller (images at 220 ppi, shorter path numbers), as PDF Compressor does. On unless turned off.
+    static var shrinkPDFs: Bool {
+        get { defaults.object(forKey: "shrinkPDFs") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "shrinkPDFs") }
+    }
+
     static var lastSaveFolder: URL? {
         get { defaults.string(forKey: "lastSaveFolder").map { URL(fileURLWithPath: $0) } }
         set { defaults.set(newValue?.path, forKey: "lastSaveFolder") }

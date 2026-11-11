@@ -18,7 +18,10 @@ enum Dialogs {
     }
 
     /// Shows a save dialog with the name filled in and the last folder used, then writes the file.
-    static func save(name: String, data: Data, completion: @escaping ([String: Any]) -> Void) {
+    /// The file's contents come from `data`, which may still be working (making the PDF smaller)
+    /// while the dialog is open.
+    static func save(name: String, data: @escaping (@escaping (Data) -> Void) -> Void,
+                     completion: @escaping ([String: Any]) -> Void) {
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
             let panel = NSSavePanel()
@@ -30,13 +33,15 @@ enum Dialogs {
             guard panel.runModal() == .OK, let url = panel.url else {
                 return completion(["cancelled": true])
             }
-            do {
-                try data.write(to: url, options: .atomic)
-                Settings.lastSaveFolder = url.deletingLastPathComponent()
-                Log.write("saved \(url.path) (\(data.count) bytes)")
-                completion(["saved": url.path, "bytes": data.count])
-            } catch {
-                completion(["error": "could not save: \(error.localizedDescription)"])
+            Settings.lastSaveFolder = url.deletingLastPathComponent()
+            data { bytes in
+                do {
+                    try bytes.write(to: url, options: .atomic)
+                    Log.write("saved \(url.path) (\(bytes.count) bytes)")
+                    completion(["saved": url.path, "bytes": bytes.count])
+                } catch {
+                    completion(["error": "could not save: \(error.localizedDescription)"])
+                }
             }
         }
     }

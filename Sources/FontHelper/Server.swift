@@ -11,7 +11,8 @@ import Network
 ///   GET  /fonts/files?family=&style=   the installed files for a font (for the report)
 ///   POST /fonts/prepare        body {"family", "style", "axes", "glyphs"}: the font check and
 ///                              subset font, see Resources/fontwork.py
-///   POST /save?name=           body: the file. Shows a save dialog. {"saved": path} or {"cancelled": true}
+///   POST /save?name=           body: the file. Shows a save dialog; a PDF is made smaller meanwhile
+///                              (menu setting). {"saved": path, "bytes", "sentBytes"} or {"cancelled": true}
 final class Server {
     private var listener: NWListener?
     private(set) var status = "Starting…"
@@ -209,9 +210,39 @@ final class Server {
 
     // MARK: saving
 
+    /// Shows the save dialog at once. A PDF is made smaller meanwhile (unless turned off in the
+    /// menu), with PDF Compressor's method; if that fails or saves nothing, the file is saved as sent.
     private func save(_ conn: NWConnection, name: String, data: Data) {
-        Dialogs.save(name: name, data: data) { [weak self] result in
-            self?.json(conn, result)
+        let shrink = Settings.shrinkPDFs && name.lowercased().hasSuffix(".pdf")
+        var ready: Data? = shrink ? nil : data
+        var waiting: ((Data) -> Void)?
+        if shrink {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let started = Date()
+                var out = data
+                do {
+                    let (smaller, images) = try Compressor.compress(data: data)
+                    let ms = Int(Date().timeIntervalSince(started) * 1000)
+                    if smaller.count < data.count {
+                        out = smaller
+                        Log.write("made the PDF smaller: \(data.count) to \(smaller.count) bytes, \(images) images, \(ms) ms")
+                    }
+                } catch {
+                    Log.write("kept the PDF as it was: \(error.localizedDescription)")
+                }
+                DispatchQueue.main.async {
+                    ready = out
+                    waiting?(out)
+                }
+            }
+        }
+        let original = data.count
+        Dialogs.save(name: name, data: { done in
+            if let d = ready { done(d) } else { waiting = done }
+        }) { [weak self] result in
+            var r = result
+            r["sentBytes"] = original
+            self?.json(conn, r)
         }
     }
 }

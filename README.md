@@ -45,7 +45,7 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 | `POST /pair` with `{"plugin": "Name"}` | Shows the Allow dialog. `{"key"}`, or 403 if declined |
 | `GET /fonts/files?family=&style=` | The installed files for a family, exact style first |
 | `POST /fonts/prepare` | The font check and subset font, below |
-| `POST /save?name=Name.pdf` with the file as the body | Shows a save dialog in the last folder used. `{"saved": path}` or `{"cancelled": true}` |
+| `POST /save?name=Name.pdf` with the file as the body | Shows a save dialog in the last folder used. While it is open, a PDF is made smaller with [PDF Compressor](https://github.com/niklas-ekholm/pdf-compressor)'s method (images at 220 ppi at the size shown, shorter path numbers, best lossless compression; text and fonts untouched). Turn it off with **Make Saved PDFs Smaller** in the menu. `{"saved": path, "bytes", "sentBytes"}` or `{"cancelled": true}` |
 
 `/fonts/prepare` takes the glyphs from the hidden text layer of Figma's own PDF export, in em:
 

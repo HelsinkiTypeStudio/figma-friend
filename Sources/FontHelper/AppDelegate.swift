@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let server = Server()
     private let statusLine = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
+    private let shrinkItem = NSMenuItem(title: "Make Saved PDFs Smaller", action: #selector(toggleShrink), keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -22,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Copy Pairing Key", #selector(copyKey)))
         menu.addItem(item("Unpair All Plugins", #selector(unpair)))
         menu.addItem(.separator())
+        shrinkItem.target = self
+        menu.addItem(shrinkItem)
         loginItem.target = self
         menu.addItem(loginItem)
         menu.addItem(item("Show Log", #selector(showLog)))
@@ -39,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        shrinkItem.state = Settings.shrinkPDFs ? .on : .off
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
@@ -67,6 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             Log.write("could not change Open at Login: \(error)")
         }
+    }
+
+    @objc private func toggleShrink() {
+        Settings.shrinkPDFs.toggle()
     }
 
     @objc private func showLog() {
