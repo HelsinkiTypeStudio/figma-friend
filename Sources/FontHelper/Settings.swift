@@ -33,15 +33,16 @@ enum Settings {
         set { defaults.set(newValue?.path, forKey: "lastSaveFolder") }
     }
 
-    /// The proof-book folder chosen for each font family, for figma-proofbook. Kept until chosen again.
-    static func proofbookFolder(family: String) -> URL? {
+    /// The proof-book folder chosen for each Figma file (by the id figma-proofbook keeps in the
+    /// file), for figma-proofbook. Kept until chosen again.
+    static func proofbookFolder(book: String) -> URL? {
         let all = defaults.dictionary(forKey: "proofbookFolders") as? [String: String] ?? [:]
-        return all[family].map { URL(fileURLWithPath: $0) }
+        return all[book].map { URL(fileURLWithPath: $0) }
     }
 
-    static func setProofbookFolder(_ url: URL, family: String) {
+    static func setProofbookFolder(_ url: URL, book: String) {
         var all = defaults.dictionary(forKey: "proofbookFolders") as? [String: String] ?? [:]
-        all[family] = url.path
+        all[book] = url.path
         defaults.set(all, forKey: "proofbookFolders")
     }
 }

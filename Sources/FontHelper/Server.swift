@@ -13,9 +13,10 @@ import Network
 ///                              subset font, see Resources/fontwork.py
 ///   POST /fonts/charset        body {"family", "style"}: every character the font maps, grouped
 ///                              for a glyph list, see Resources/fontwork.py
-///   POST /proofbook            body {"family", "choose"?}: every page of the family's proof-book
-///                              folder, chosen in a dialog the first time (or when "choose" is true)
-///                              and remembered; see Resources/fontwork.py. {"cancelled": true} if not chosen
+///   POST /proofbook            body {"book", "family", "choose"?}: every page of a proof-book folder,
+///                              chosen in a dialog the first time (or when "choose" is true) and
+///                              remembered by "book", the Figma file's id; see Resources/fontwork.py.
+///                              {"cancelled": true} if no folder was chosen
 ///   POST /save?name=           body: the file. Shows a save dialog; a PDF is made smaller meanwhile
 ///                              (menu setting). {"saved": path, "bytes", "sentBytes"} or {"cancelled": true}
 final class Server {
@@ -244,13 +245,14 @@ final class Server {
 
     // MARK: proof-books
 
-    /// The pages of a family's proof-book, read fresh. The folder is asked for once per family.
+    /// The pages of a proof-book, read fresh. The folder is asked for once per Figma file.
     private func proofbook(_ conn: NWConnection, _ body: Data) {
         guard let req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let family = req["family"] as? String, !family.isEmpty
-        else { return json(conn, ["error": "family is required"], "400 Bad Request") }
+              let book = req["book"] as? String, !book.isEmpty
+        else { return json(conn, ["error": "book is required"], "400 Bad Request") }
+        let family = (req["family"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "this Figma file"
 
-        let known = Settings.proofbookFolder(family: family)
+        let known = Settings.proofbookFolder(book: book)
         if let folder = known, (req["choose"] as? Bool) != true {
             var isDir: ObjCBool = false
             if FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue {
@@ -262,7 +264,7 @@ final class Server {
                 self?.json(conn, ["cancelled": true])
                 return
             }
-            Settings.setProofbookFolder(url, family: family)
+            Settings.setProofbookFolder(url, book: book)
             Log.write("proof-book for \(family): \(url.path)")
             self?.readProofbook(conn, url, family: family)
         }
