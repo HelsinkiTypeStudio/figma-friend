@@ -3,7 +3,7 @@ import Security
 
 enum Settings {
     static let port: UInt16 = 7337
-    static let version = "1.0.0"
+    static let version = "1.1.0"
 
     private static let defaults = UserDefaults.standard
 
@@ -31,5 +31,17 @@ enum Settings {
     static var lastSaveFolder: URL? {
         get { defaults.string(forKey: "lastSaveFolder").map { URL(fileURLWithPath: $0) } }
         set { defaults.set(newValue?.path, forKey: "lastSaveFolder") }
+    }
+
+    /// The proof-book folder chosen for each font family, for figma-proofbook. Kept until chosen again.
+    static func proofbookFolder(family: String) -> URL? {
+        let all = defaults.dictionary(forKey: "proofbookFolders") as? [String: String] ?? [:]
+        return all[family].map { URL(fileURLWithPath: $0) }
+    }
+
+    static func setProofbookFolder(_ url: URL, family: String) {
+        var all = defaults.dictionary(forKey: "proofbookFolders") as? [String: String] ?? [:]
+        all[family] = url.path
+        defaults.set(all, forKey: "proofbookFolders")
     }
 }

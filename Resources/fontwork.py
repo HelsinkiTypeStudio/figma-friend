@@ -35,8 +35,24 @@ Answer (for glyph lists): every character the first readable file maps, grouped 
 
   Glyphs without a Unicode value (alternates, .ss01) can't be typed, so they are only counted.
   Invisible codepoints (controls, private use, line and paragraph separators) are skipped.
+
+Request:
+  {"id": 3, "op": "proofbook", "folder": "/Users/.../proofbook"}
+
+Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain text to set in Figma.
+  {"id": 3, "ok": true, "folder": ..., "name": "<folder name>",
+   "pages": [{"path": "01-Latin-LC/a-z.txt", "section": "01-Latin-LC", "name": "a-z", "text": "...",
+              "untypable": ["a.ss01", ...]}, ...],
+   "skipped": [{"path": ..., "reason": "not downloaded" | "..."}],
+   "styles": <figma-styles.json beside the pages, or null>}
+
+  A page is any .txt file in the folder or a folder inside it, in alphabetical order. Its
+  ProofBook header (line 1 is ---, up to the next ---) is left out. Glyphs-style glyph names
+  (/a, /uni00E9, /infinity) become the characters they stand for; a name that can't be typed
+  (an alternate such as /a.ss01) becomes a space and is listed in "untypable". Files iCloud
+  has not downloaded are skipped rather than read, since reading one can hang.
 """
-import sys, os, json, base64, io, traceback, unicodedata
+import sys, os, re, json, base64, io, traceback, unicodedata
 
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
@@ -44,6 +60,7 @@ from fontTools.pens.boundsPen import ControlBoundsPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.fontBuilder import FontBuilder
 from fontTools import subset
+from fontTools import agl
 
 # Figma rounds outline coordinates to whole font units, and fixing a variable font can
 # round a point differently. Tests 3 and 5 found every difference within one unit.
@@ -362,6 +379,84 @@ def charset(req):
     return {"ok": False, "error": "no candidate file could be read", "tried": errors}
 
 
+# ---------- proof-books (figma-proofbook) ----------
+
+PROOFBOOK_STYLES = "figma-styles.json"
+SF_DATALESS = 0x40000000   # macOS: an iCloud file whose contents are not on this Mac
+# Glyphs' way of typing a glyph by name: a slash, the name, and an optional space that ends it.
+GLYPH_NAME = re.compile(r"/([A-Za-z_][A-Za-z0-9._-]*) ?")
+
+
+def proof_text(raw):
+    """The proof text of a page: ProofBook's header (line 1 is ---, up to the next ---) left out.
+    A header that never closes is proof text, as ProofBook reads it."""
+    lines = raw.split("\n")
+    if lines and lines[0].rstrip("\r") == "---":
+        for i in range(1, len(lines)):
+            if lines[i].rstrip("\r") == "---":
+                return "\n".join(lines[i + 1:])
+    return raw
+
+
+def glyph_char(name):
+    """The character a glyph name stands for, or None when it can't be typed (an alternate,
+    a ligature, a name with a suffix)."""
+    if "." in name:
+        return None
+    u = agl.toUnicode(name)
+    return u if len(u) == 1 else None
+
+
+def typed(text, untypable):
+    def one(m):
+        c = glyph_char(m.group(1))
+        if c is None:
+            untypable.append(m.group(1))
+            return " "
+        return c
+    return GLYPH_NAME.sub(one, text)
+
+
+def proofbook(req):
+    folder = req.get("folder") or ""
+    if not os.path.isdir(folder):
+        return {"ok": False, "error": f"no folder at {folder}"}
+    found = []
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for f in files:
+            if f.lower().endswith(".txt") and not f.startswith("."):
+                found.append(os.path.relpath(os.path.join(root, f), folder))
+    found.sort(key=lambda p: [part.casefold() for part in p.split(os.sep)])
+    pages, skipped = [], []
+    for rel in found:
+        path = os.path.join(folder, rel)
+        try:
+            if getattr(os.lstat(path), "st_flags", 0) & SF_DATALESS:
+                skipped.append({"path": rel, "reason": "not downloaded"})
+                continue
+            with open(path, "rb") as fh:
+                raw = fh.read().decode("utf-8", errors="replace")
+        except OSError as e:
+            skipped.append({"path": rel, "reason": str(e)})
+            continue
+        untypable = []
+        text = typed(proof_text(raw.replace("\r\n", "\n")), untypable)
+        section = os.path.dirname(rel)
+        pages.append({"path": rel, "section": section.replace(os.sep, " / "),
+                      "name": os.path.basename(rel)[:-4], "text": text, "untypable": untypable})
+    styles = None
+    sp = os.path.join(folder, PROOFBOOK_STYLES)
+    if os.path.isfile(sp):
+        try:
+            with open(sp, encoding="utf-8") as fh:
+                styles = json.load(fh)
+        except (OSError, ValueError) as e:
+            styles = {"error": f"{PROOFBOOK_STYLES} could not be read: {e}"}
+    return {"ok": True, "folder": folder, "name": os.path.basename(os.path.normpath(folder)),
+            "pages": pages, "skipped": skipped, "styles": styles}
+
+
 def main():
     for line in sys.stdin:
         line = line.strip()
@@ -375,6 +470,8 @@ def main():
                 ans = prepare(req)
             elif req.get("op") == "charset":
                 ans = charset(req)
+            elif req.get("op") == "proofbook":
+                ans = proofbook(req)
             elif req.get("op") == "ping":
                 import fontTools
                 ans = {"ok": True, "fontTools": fontTools.version, "python": sys.version.split()[0]}

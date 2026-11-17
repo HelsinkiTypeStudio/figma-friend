@@ -45,4 +45,21 @@ enum Dialogs {
             }
         }
     }
+
+    /// Asks for the proof-book folder of a font family. `nil` when cancelled.
+    static func chooseProofbook(family: String, current: URL?, completion: @escaping (URL?) -> Void) {
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            let panel = NSOpenPanel()
+            panel.message = "Choose the proof-book folder for \(family)"
+            panel.prompt = "Choose"
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = false
+            panel.level = .floating
+            if let c = current { panel.directoryURL = c.deletingLastPathComponent() }
+            completion(panel.runModal() == .OK ? panel.url : nil)
+        }
+    }
 }
