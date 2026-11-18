@@ -17,9 +17,10 @@ import Network
 ///                              chosen in a dialog the first time (or when "choose" is true) and
 ///                              remembered by "book", the Figma file's id; see Resources/fontwork.py.
 ///                              {"cancelled": true} if no folder was chosen
-///   POST /proofbook/save       body {"book", "pages": [{"path", "laid", "edited"}]}: writes edits made
-///                              in Figma back to the pages of the folder remembered for "book";
-///                              see Resources/fontwork.py
+///   POST /proofbook/save       body {"book", "files", "trash", "folders", "goneFolders"}: makes the
+///                              folder remembered for "book" match the Figma page (new, renamed,
+///                              moved, edited and deleted pages and folders; deleted ones go to the
+///                              Trash); see Resources/fontwork.py
 ///   POST /save?name=           body: the file. Shows a save dialog; a PDF is made smaller meanwhile
 ///                              (menu setting). {"saved": path, "bytes", "sentBytes"} or {"cancelled": true}
 final class Server {
@@ -290,17 +291,18 @@ final class Server {
         }
     }
 
-    /// Edits made in Figma, written back to the proof-pages. Only into the folder already
+    /// The Figma page, written back to the proof-book. Only into the folder already
     /// remembered for this Figma file: nothing is asked, and nothing is written anywhere else.
     private func saveProofbook(_ conn: NWConnection, _ body: Data) {
         guard let req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let book = req["book"] as? String, !book.isEmpty,
-              let pages = req["pages"] as? [Any]
-        else { return json(conn, ["error": "book and pages are required"], "400 Bad Request") }
+              let book = req["book"] as? String, !book.isEmpty
+        else { return json(conn, ["error": "book is required"], "400 Bad Request") }
         guard let folder = Settings.proofbookFolder(book: book) else {
             return json(conn, ["ok": false, "error": "this Figma file has no proof-book folder yet; lay it out first"])
         }
-        Worker.shared.ask(["op": "proofbook-save", "folder": folder.path, "pages": pages]) { [weak self] result in
+        var ask: [String: Any] = ["op": "proofbook-apply", "folder": folder.path]
+        for k in ["files", "trash", "folders", "goneFolders"] { ask[k] = req[k] as? [Any] ?? [] }
+        Worker.shared.ask(ask) { [weak self] result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let data):

@@ -30,6 +30,8 @@ write(book, "01-Latin-LC/notes.md", "not a page")
 write(book, ".hidden/x.txt", "hidden")
 write(book, "top.txt", "Hamburgefonstiv")
 write(book, "figma-styles.json", json.dumps({"choice": "masters"}))
+os.makedirs(os.path.join(book, "03-Empty", "1-Metrics"))
+write(book, "04-Only-dotfiles/.DS_Store", "")
 
 a = ask({"id": 1, "op": "proofbook", "folder": book})
 assert a["ok"], a
@@ -45,6 +47,7 @@ assert az["untypable"] == ["a.ss01"], az["untypable"]
 assert az["section"] == "01-Latin-LC" and az["name"] == "a-z"
 assert pages["top.txt"]["section"] == ""
 assert a["styles"] == {"choice": "masters"}
+assert a["empty"] == ["03-Empty / 1-Metrics", "04-Only-dotfiles"], a["empty"]
 assert a["name"] == os.path.basename(book)
 assert not ask({"id": 2, "op": "proofbook", "folder": book + "-missing"})["ok"]
 print("proof-book reading: all checks passed")

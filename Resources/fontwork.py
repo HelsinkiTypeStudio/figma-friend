@@ -44,6 +44,7 @@ Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain t
    "pages": [{"path": "01-Latin-LC/a-z.txt", "section": "01-Latin-LC", "name": "a-z", "text": "...",
               "untypable": ["a.ss01", ...]}, ...],
    "skipped": [{"path": ..., "reason": "not downloaded" | "..."}],
+   "empty": ["03-New", ...],   (folders with nothing in them, joined with " / " like "section")
    "styles": <figma-styles.json beside the pages, or null>}
 
   A page is any .txt file in the folder or a folder inside it, in alphabetical order. Its
@@ -53,21 +54,27 @@ Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain t
   has not downloaded are skipped rather than read, since reading one can hang.
 
 Request:
-  {"id": 4, "op": "proofbook-save", "folder": "/Users/.../proofbook",
-   "pages": [{"path": "01-Latin-LC/a-z.txt", "laid": "<text as laid out>", "edited": "<text now>"}]}
+  {"id": 4, "op": "proofbook-apply", "folder": "/Users/.../proofbook",
+   "files": [{"path": "01-Latin-LC/a-z.txt", "from": "<path it had>" | null,
+              "laid": "<text it was laid out with>" | null, "text": "<text now>"}],
+   "trash": ["01-Latin-LC/old.txt"], "folders": ["01-Latin-LC", "02-New"], "goneFolders": ["03-Old"]}
 
-Answer (for figma-proofbook): writes edits made in Figma back to the proof-pages.
-  {"id": 4, "ok": true, "pages": [{"path": ..., "saved": true, "text": "<new text, typed>",
-                                   "untypable": [...]}
-                                  | {"path": ..., "saved": false, "reason": "..."}]}
+Answer (for figma-proofbook): makes the folder match the Figma page. Each section is a folder and
+each frame in it a page, so a new, renamed, moved or deleted frame or section is a new, renamed,
+moved or deleted file or folder.
+  {"id": 4, "ok": true, "files": [{"ok": true} | {"ok": false, "reason": "..."}],   (same order)
+   "trashed": [...], "skipped": [{"path": ..., "reason": ...}]}
 
-  "laid" is the text the page was laid out with. If the file no longer gives that text, it was
-  changed on disk since (in Glyphs, say) and is left alone. The header is kept as it is, and so
-  is every line that wasn't edited, glyph names and all; an edited line is written as typed. A
-  page where an edited line held a name that can't be typed (/a.ss01, shown as a space) is left
-  alone too, since writing it would lose the name.
+  "files" lists only pages that are new ("from" null), moved or renamed ("from" differs) or edited.
+  A page whose file no longer gives the text it was laid out with was changed on disk since (in
+  Glyphs, say) and is left alone. The header is kept as it is, and so is every line that wasn't
+  edited, glyph names and all; an edited line is written as typed. A page where an edited line
+  held a name that can't be typed (/a.ss01, shown as a space) is left alone too, since writing it
+  would lose the name. So is a page whose new path is taken, or used twice. "trash" pages and
+  "goneFolders" (once nothing but .DS_Store is left in them) go to the Trash. Every folder in
+  "folders" is made if it isn't there.
 """
-import sys, os, re, json, base64, io, traceback, unicodedata, difflib
+import sys, os, re, json, base64, io, traceback, unicodedata, difflib, shutil
 
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
@@ -468,59 +475,187 @@ def merge_edit(body, laid, edited):
     return "\n".join(out) + tail, None
 
 
-def save_page(folder, page):
-    rel = page.get("path") or ""
-    result = {"path": rel, "saved": False}
-    root = os.path.realpath(folder)
-    path = os.path.realpath(os.path.join(root, rel))
-    if not path.startswith(root + os.sep) or not path.lower().endswith(".txt") or not os.path.isfile(path):
-        result["reason"] = "not a page in the proof-book folder"
-        return result
+class Skip(Exception):
+    pass
+
+
+def page_path(root, rel, folder=False):
+    """The absolute path of a page (or folder) in the proof-book, or Skip."""
+    parts = (rel or "").split("/")
+    if not folder and not rel:
+        raise Skip("no name")
+    for part in parts if rel else []:
+        if not part.strip() or part.startswith(".") or part != part.strip():
+            raise Skip("not a usable name")
+    if not folder and not rel.lower().endswith(".txt"):
+        raise Skip("not a page")
+    path = os.path.realpath(os.path.join(root, *parts)) if rel else root
+    if path != root and not path.startswith(root + os.sep):
+        raise Skip("outside the proof-book folder")
+    return path
+
+
+def read_page(path):
+    """(header, proof text, uses CRLF) of a page on disk, or Skip."""
+    if not os.path.isfile(path):
+        raise Skip("no longer on disk")
+    if getattr(os.lstat(path), "st_flags", 0) & SF_DATALESS:
+        raise Skip("not downloaded")
     try:
-        if getattr(os.lstat(path), "st_flags", 0) & SF_DATALESS:
-            result["reason"] = "not downloaded"
-            return result
         with open(path, "rb") as fh:
             raw = fh.read().decode("utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        result["reason"] = str(e)
-        return result
-    crlf = "\r\n" in raw
+        raise Skip(str(e))
     head, body = split_page(raw.replace("\r\n", "\n"))
-    new_body, reason = merge_edit(body, page.get("laid") or "", page.get("edited") or "")
-    if new_body is None:
-        result["reason"] = reason
-        return result
-    if new_body != body:
-        text = head + new_body
-        if crlf:
-            text = text.replace("\n", "\r\n")
-        try:
-            # Written in place, so the file keeps its Finder tags and other attributes.
-            with open(path, "wb") as fh:
-                fh.write(text.encode("utf-8"))
-        except OSError as e:
-            result["reason"] = str(e)
-            return result
-    untypable = []
-    result.update(saved=True, text=typed(new_body, untypable), untypable=untypable)
-    return result
+    return head, body, "\r\n" in raw
 
 
-def proofbook_save(req):
+def trash_dir():
+    return os.environ.get("PROOFBOOK_TRASH") or os.path.expanduser("~/.Trash")
+
+
+def to_trash(path):
+    """Moves a file or folder to the Trash under a name not already there."""
+    trash = trash_dir()
+    os.makedirs(trash, exist_ok=True)
+    name = os.path.basename(path)
+    stem, ext = os.path.splitext(name)
+    dest, n = os.path.join(trash, name), 2
+    while os.path.lexists(dest):
+        dest, n = os.path.join(trash, f"{stem} {n}{ext}"), n + 1
+    shutil.move(path, dest)
+
+
+def write_text(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Written in place when it exists, so the file keeps its Finder tags and other attributes.
+    with open(path, "wb") as fh:
+        fh.write(text.encode("utf-8"))
+
+
+def proofbook_apply(req):
     folder = req.get("folder") or ""
     if not os.path.isdir(folder):
         return {"ok": False, "error": f"no folder at {folder}"}
-    return {"ok": True, "pages": [save_page(folder, p) for p in req.get("pages") or []]}
+    root = os.path.realpath(folder)
+    files = req.get("files") or []
+    results = [None] * len(files)
+    skipped, trashed = [], []
+
+    # Pages going to the Trash.
+    trash = []
+    for rel in req.get("trash") or []:
+        try:
+            path = page_path(root, rel)
+            if not os.path.isfile(path):
+                raise Skip("no longer on disk")
+            trash.append((rel, path))
+        except Skip as e:
+            skipped.append({"path": rel, "reason": str(e)})
+
+    # What each new, moved or edited page will be, checked before anything is touched.
+    plans = []   # (index, target path, source path or None, new content or None when unchanged)
+    targets = {}
+    for i, f in enumerate(files):
+        targets.setdefault(os.path.normcase(f.get("path") or ""), []).append(i)
+    vacated = {path for _, path in trash}
+    for i, f in enumerate(files):
+        try:
+            if len(targets[os.path.normcase(f.get("path") or "")]) > 1:
+                raise Skip("two frames have this name")
+            target = page_path(root, f.get("path"))
+            text = (f.get("text") or "").replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n")
+            if f.get("from"):
+                source = page_path(root, f["from"])
+                head, body, crlf = read_page(source)
+                new_body, reason = merge_edit(body, f.get("laid") or "", text)
+                if new_body is None:
+                    raise Skip(reason)
+                content = None
+                if new_body != body:
+                    content = head + new_body
+                    if crlf:
+                        content = content.replace("\n", "\r\n")
+                plans.append((i, target, source, content))
+                if source != target:
+                    vacated.add(source)
+            else:
+                plans.append((i, target, None, text.rstrip() + "\n"))
+        except Skip as e:
+            results[i] = {"ok": False, "reason": str(e)}
+    moving = {source for _, _, source, _ in plans if source}
+    ready = []
+    for plan in plans:
+        i, target, source, content = plan
+        if target != source and os.path.lexists(target) and target not in vacated:
+            results[i] = {"ok": False, "reason": "a file with this name is already there"}
+            if source in moving:
+                moving.discard(source)
+            continue
+        ready.append(plan)
+
+    # Carry it out: the Trash first, then moves through temporary names (so two pages can swap
+    # names), then new and edited text.
+    for rel, path in trash:
+        if path in moving:
+            continue   # a page that was deleted in one place and kept in another stays
+        try:
+            to_trash(path)
+            trashed.append(rel)
+        except OSError as e:
+            skipped.append({"path": rel, "reason": str(e)})
+    temp = {}
+    for n, (i, target, source, content) in enumerate(ready):
+        if source and source != target:
+            t = os.path.join(os.path.dirname(source), f".proofbook-move-{n}")
+            try:
+                os.rename(source, t)
+                temp[i] = t
+            except OSError as e:
+                results[i] = {"ok": False, "reason": str(e)}
+    for i, target, source, content in ready:
+        if results[i] is not None:
+            continue
+        try:
+            if i in temp:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                os.rename(temp[i], target)
+            if content is not None:
+                write_text(target, content)
+            results[i] = {"ok": True}
+        except OSError as e:
+            results[i] = {"ok": False, "reason": str(e)}
+
+    for rel in req.get("folders") or []:
+        try:
+            os.makedirs(page_path(root, rel, folder=True), exist_ok=True)
+        except (Skip, OSError) as e:
+            skipped.append({"path": rel, "reason": str(e)})
+    for rel in sorted(req.get("goneFolders") or [], key=lambda r: -r.count("/")):
+        try:
+            path = page_path(root, rel, folder=True)
+            if path == root or not os.path.isdir(path):
+                continue
+            left = [n for _, _, names in os.walk(path) for n in names if n != ".DS_Store"]
+            if left:
+                skipped.append({"path": rel, "reason": "folder kept: it still has files in it"})
+                continue
+            to_trash(path)
+            trashed.append(rel)
+        except (Skip, OSError) as e:
+            skipped.append({"path": rel, "reason": str(e)})
+    return {"ok": True, "files": results, "trashed": trashed, "skipped": skipped}
 
 
 def proofbook(req):
     folder = req.get("folder") or ""
     if not os.path.isdir(folder):
         return {"ok": False, "error": f"no folder at {folder}"}
-    found = []
+    found, empty = [], []
     for root, dirs, files in os.walk(folder):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
+        if root != folder and not dirs and not [f for f in files if not f.startswith(".")]:
+            empty.append(os.path.relpath(root, folder).replace(os.sep, " / "))
         for f in files:
             if f.lower().endswith(".txt") and not f.startswith("."):
                 found.append(os.path.relpath(os.path.join(root, f), folder))
@@ -551,7 +686,7 @@ def proofbook(req):
         except (OSError, ValueError) as e:
             styles = {"error": f"{PROOFBOOK_STYLES} could not be read: {e}"}
     return {"ok": True, "folder": folder, "name": os.path.basename(os.path.normpath(folder)),
-            "pages": pages, "skipped": skipped, "styles": styles}
+            "pages": pages, "skipped": skipped, "empty": sorted(empty, key=str.casefold), "styles": styles}
 
 
 def main():
@@ -569,8 +704,8 @@ def main():
                 ans = charset(req)
             elif req.get("op") == "proofbook":
                 ans = proofbook(req)
-            elif req.get("op") == "proofbook-save":
-                ans = proofbook_save(req)
+            elif req.get("op") == "proofbook-apply":
+                ans = proofbook_apply(req)
             elif req.get("op") == "ping":
                 import fontTools
                 ans = {"ok": True, "fontTools": fontTools.version, "python": sys.version.split()[0]}
