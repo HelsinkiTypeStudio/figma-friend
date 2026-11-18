@@ -45,6 +45,9 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 | `POST /pair` with `{"plugin": "Name"}` | Shows the Allow dialog. `{"key"}`, or 403 if declined |
 | `GET /fonts/files?family=&style=` | The installed files for a family, exact style first |
 | `POST /fonts/prepare` | The font check and subset font, below |
+| `POST /fonts/charset` with `{"family", "style"}` | Every character the installed font maps, grouped for a glyph list (uppercase, lowercase, accented, figures, punctuation and so on), with the file's path, version and date, and how many glyphs have no Unicode value |
+| `POST /proofbook` with `{"book", "family"}` | Every proof-page in a [ProofBook](https://github.com/HelsinkiTypeStudio/proofbook) folder, as plain text, plus `figma-styles.json` if the folder has one. The first time, a dialog asks for the folder ("Choose the proof-book folder for *family*"); it is remembered by `book`, an id the plugin keeps in the Figma file. Add `"choose": true` to pick it again. `{"cancelled": true}` if no folder was chosen |
+| `POST /proofbook/save` with `{"book", "files", "trash", "folders", "goneFolders"}` | Makes the folder remembered for `book` match the Figma page: each section is a folder, each frame in it a page, so new, renamed, moved, edited and deleted frames and sections become new, renamed, moved, edited and deleted files and folders. Deleted ones go to the Trash. The header and every unedited line are kept exactly; a page changed on disk since the layout, one whose edited line held a glyph name Figma can't type (`/a.ss01`), or one whose new name is taken is left alone and the answer says why |
 | `POST /save?name=Name.pdf` with the file as the body | Shows a save dialog in the last folder used. While it is open, a PDF is made smaller with [PDF Compressor](https://github.com/niklas-ekholm/pdf-compressor)'s method (images at 220 ppi at the size shown, shorter path numbers, best lossless compression; text and fonts untouched). Turn it off with **Make Saved PDFs Smaller** in the menu. `{"saved": path, "bytes", "sentBytes"}` or `{"cancelled": true}` |
 
 `/fonts/prepare` takes the glyphs from the hidden text layer of Figma's own PDF export, in em:
@@ -59,13 +62,16 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 ## Roadmap
 
 - **Proofs.** A Figma plugin that stamps each proof with the font file it was set in: build version and date. Every proof then shows which build it is.
-- **Glyph lists.** A plugin that asks Figma Friend for a font's full character set and lays it out in Figma for proofing.
+- **Glyph lists.** A plugin that asks Figma Friend for a font's full character set and lays it out in Figma for proofing. Figma Friend's part, `/fonts/charset`, is in place.
+- **Proof-books.** [figma-proofbook](https://github.com/HelsinkiTypeStudio/figma-proofbook) lays out a ProofBook folder's pages as Figma frames. Figma Friend's part, `/proofbook`, is in place.
 
 ## Development
 
 ```sh
 swift run                         # runs from Terminal, using /usr/bin/python3 with fontTools
 python3 tests/test_fontwork.py    # checks the font work with two small made-up fonts
+python3 tests/test_proofbook.py   # checks reading a proof-book folder
+python3 tests/test_proofbook_apply.py   # checks writing the Figma page back to the folder
 ```
 
 `tests/check_worker.py` runs the font work against real exports made by the figma-export-pdf test plugin.

@@ -93,5 +93,35 @@ for cff in (False, True):
         check(order[got[0]] == "A" and got[0] == got[1] and order[got[3]] == "f_f", f"{kind}: glyph ids point at the right glyphs: {got}")
         check("GSUB" not in f and len(order) == 5, f"{kind}: subset to 5 glyphs without layout tables")
 
+# Glyph lists
+path = make(False)
+ans = run({"id": 8, "op": "charset", "candidates": [{"path": "/nonexistent.ttf"}, {"path": path}]})
+groups = {g["label"]: g["codepoints"] for g in ans.get("groups", [])}
+check(ans["ok"] and ans["path"] == path, "charset: skips an unreadable file")
+check(groups == {"Uppercase": [65, 66], "Spaces": [32]}, f"charset: groups {groups}")
+check(ans["totalGlyphs"] == 5 and ans["unmappedGlyphs"] == 1, "charset: counts the glyph without a Unicode value")
+
+chars = "AÉØaéß0½.€+©˜\u0300\u2028\ue000"
+fb = FontBuilder(1000, isTTF=True)
+names = [".notdef"] + [f"g{i}" for i in range(len(chars))]
+fb.setupGlyphOrder(names)
+fb.setupCharacterMap({ord(c): f"g{i}" for i, c in enumerate(chars)})
+fb.setupGlyf({n: TTGlyphPen(None).glyph() for n in names})
+fb.setupHorizontalMetrics({n: (500, 0) for n in names})
+fb.setupHorizontalHeader(ascent=800, descent=-200)
+fb.setupNameTable({"familyName": "Many", "styleName": "Bold", "psName": "Many-Bold", "version": "Version 1.002"})
+fb.setupOS2(); fb.setupPost()
+path = os.path.join(tempfile.mkdtemp(), "many.ttf"); fb.save(path)
+ans = run({"id": 9, "op": "charset", "candidates": [{"path": path}]})
+groups = {g["label"]: "".join(map(chr, g["codepoints"])) for g in ans["groups"]}
+want = {"Uppercase": "A", "Uppercase, other letters": "Ø", "Uppercase, accented": "É", "Lowercase": "a",
+        "Lowercase, other letters": "ß", "Lowercase, accented": "é", "Figures": "0", "Fractions and other numbers": "½",
+        "Punctuation": ".", "Currency": "€", "Math": "+", "Symbols": "©", "Accents": "˜", "Combining accents": "\u0300"}
+for k, v in want.items():
+    check(groups.get(k) == v, f"charset: {k} has {v!r} (got {groups.get(k)!r})")
+check(ans["skipped"] == [0x2028, 0xE000], f"charset: skips invisible codepoints {ans['skipped']}")
+check(ans["version"] == "Version 1.002" and ans["styleName"] == "Bold", "charset: version and style")
+check(list(groups) == list(want), f"charset: group order {list(groups)}")
+
 print("\nAll passed." if not failures else f"\n{failures} failed.")
 sys.exit(1 if failures else 0)
