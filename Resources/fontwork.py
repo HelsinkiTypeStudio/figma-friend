@@ -51,8 +51,23 @@ Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain t
   (/a, /uni00E9, /infinity) become the characters they stand for; a name that can't be typed
   (an alternate such as /a.ss01) becomes a space and is listed in "untypable". Files iCloud
   has not downloaded are skipped rather than read, since reading one can hang.
+
+Request:
+  {"id": 4, "op": "proofbook-save", "folder": "/Users/.../proofbook",
+   "pages": [{"path": "01-Latin-LC/a-z.txt", "laid": "<text as laid out>", "edited": "<text now>"}]}
+
+Answer (for figma-proofbook): writes edits made in Figma back to the proof-pages.
+  {"id": 4, "ok": true, "pages": [{"path": ..., "saved": true, "text": "<new text, typed>",
+                                   "untypable": [...]}
+                                  | {"path": ..., "saved": false, "reason": "..."}]}
+
+  "laid" is the text the page was laid out with. If the file no longer gives that text, it was
+  changed on disk since (in Glyphs, say) and is left alone. The header is kept as it is, and so
+  is every line that wasn't edited, glyph names and all; an edited line is written as typed. A
+  page where an edited line held a name that can't be typed (/a.ss01, shown as a space) is left
+  alone too, since writing it would lose the name.
 """
-import sys, os, re, json, base64, io, traceback, unicodedata
+import sys, os, re, json, base64, io, traceback, unicodedata, difflib
 
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
@@ -417,6 +432,88 @@ def typed(text, untypable):
     return GLYPH_NAME.sub(one, text)
 
 
+def split_page(raw):
+    """(header, proof text), with header + proof text == raw. The header is "" when there is none."""
+    lines = raw.split("\n")
+    if lines and lines[0].rstrip("\r") == "---":
+        for i in range(1, len(lines)):
+            if lines[i].rstrip("\r") == "---":
+                head = "\n".join(lines[:i + 1]) + "\n"
+                return head, raw[len(head):]
+    return "", raw
+
+
+def merge_edit(body, laid, edited):
+    """The new proof text, or (None, reason). Untouched lines are kept exactly as in the file."""
+    core = body.rstrip()
+    tail = body[len(core):]
+    original = core.split("\n")
+    shown = [typed(line, []) for line in original]
+    if "\n".join(shown) != laid.rstrip():
+        return None, "changed on disk since it was laid out"
+    edited = edited.replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n").rstrip()
+    new = edited.split("\n")
+    out, lost = [], []
+    ops = difflib.SequenceMatcher(None, shown, new, autojunk=False).get_opcodes()
+    for tag, i1, i2, j1, j2 in ops:
+        if tag == "equal":
+            out += original[i1:i2]
+            continue
+        if tag == "replace":
+            for line in original[i1:i2]:
+                typed(line, lost)
+        out += new[j1:j2]
+    if lost:
+        return None, "an edited line had " + ", ".join("/" + n for n in lost) + ", which can't be typed in Figma"
+    return "\n".join(out) + tail, None
+
+
+def save_page(folder, page):
+    rel = page.get("path") or ""
+    result = {"path": rel, "saved": False}
+    root = os.path.realpath(folder)
+    path = os.path.realpath(os.path.join(root, rel))
+    if not path.startswith(root + os.sep) or not path.lower().endswith(".txt") or not os.path.isfile(path):
+        result["reason"] = "not a page in the proof-book folder"
+        return result
+    try:
+        if getattr(os.lstat(path), "st_flags", 0) & SF_DATALESS:
+            result["reason"] = "not downloaded"
+            return result
+        with open(path, "rb") as fh:
+            raw = fh.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        result["reason"] = str(e)
+        return result
+    crlf = "\r\n" in raw
+    head, body = split_page(raw.replace("\r\n", "\n"))
+    new_body, reason = merge_edit(body, page.get("laid") or "", page.get("edited") or "")
+    if new_body is None:
+        result["reason"] = reason
+        return result
+    if new_body != body:
+        text = head + new_body
+        if crlf:
+            text = text.replace("\n", "\r\n")
+        try:
+            # Written in place, so the file keeps its Finder tags and other attributes.
+            with open(path, "wb") as fh:
+                fh.write(text.encode("utf-8"))
+        except OSError as e:
+            result["reason"] = str(e)
+            return result
+    untypable = []
+    result.update(saved=True, text=typed(new_body, untypable), untypable=untypable)
+    return result
+
+
+def proofbook_save(req):
+    folder = req.get("folder") or ""
+    if not os.path.isdir(folder):
+        return {"ok": False, "error": f"no folder at {folder}"}
+    return {"ok": True, "pages": [save_page(folder, p) for p in req.get("pages") or []]}
+
+
 def proofbook(req):
     folder = req.get("folder") or ""
     if not os.path.isdir(folder):
@@ -472,6 +569,8 @@ def main():
                 ans = charset(req)
             elif req.get("op") == "proofbook":
                 ans = proofbook(req)
+            elif req.get("op") == "proofbook-save":
+                ans = proofbook_save(req)
             elif req.get("op") == "ping":
                 import fontTools
                 ans = {"ok": True, "fontTools": fontTools.version, "python": sys.version.split()[0]}

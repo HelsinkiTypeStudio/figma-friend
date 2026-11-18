@@ -47,6 +47,7 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 | `POST /fonts/prepare` | The font check and subset font, below |
 | `POST /fonts/charset` with `{"family", "style"}` | Every character the installed font maps, grouped for a glyph list (uppercase, lowercase, accented, figures, punctuation and so on), with the file's path, version and date, and how many glyphs have no Unicode value |
 | `POST /proofbook` with `{"book", "family"}` | Every proof-page in a [ProofBook](https://github.com/HelsinkiTypeStudio/proofbook) folder, as plain text, plus `figma-styles.json` if the folder has one. The first time, a dialog asks for the folder ("Choose the proof-book folder for *family*"); it is remembered by `book`, an id the plugin keeps in the Figma file. Add `"choose": true` to pick it again. `{"cancelled": true}` if no folder was chosen |
+| `POST /proofbook/save` with `{"book", "pages": [{"path", "laid", "edited"}]}` | Writes edits made in Figma back to the proof-pages of the folder remembered for `book`. The header and every unedited line are kept exactly; a page changed on disk since the layout, or whose edited line held a glyph name Figma can't type (`/a.ss01`), is left alone and the answer says why |
 | `POST /save?name=Name.pdf` with the file as the body | Shows a save dialog in the last folder used. While it is open, a PDF is made smaller with [PDF Compressor](https://github.com/niklas-ekholm/pdf-compressor)'s method (images at 220 ppi at the size shown, shorter path numbers, best lossless compression; text and fonts untouched). Turn it off with **Make Saved PDFs Smaller** in the menu. `{"saved": path, "bytes", "sentBytes"}` or `{"cancelled": true}` |
 
 `/fonts/prepare` takes the glyphs from the hidden text layer of Figma's own PDF export, in em:
@@ -70,6 +71,7 @@ Every answer allows any origin, because Figma plugin windows have a null origin.
 swift run                         # runs from Terminal, using /usr/bin/python3 with fontTools
 python3 tests/test_fontwork.py    # checks the font work with two small made-up fonts
 python3 tests/test_proofbook.py   # checks reading a proof-book folder
+python3 tests/test_proofbook_save.py   # checks writing Figma edits back
 ```
 
 `tests/check_worker.py` runs the font work against real exports made by the figma-export-pdf test plugin.
