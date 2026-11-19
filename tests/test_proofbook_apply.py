@@ -127,5 +127,36 @@ before = os.stat(os.path.join(book, "c.txt")).st_mtime_ns
 a = apply(book, files=[edit(book, "c.txt", "one\nthree")])
 assert a["files"] == [{"ok": True}] and os.stat(os.path.join(book, "c.txt")).st_mtime_ns == before, a
 
+# Status and notes: only the header changes, every other line of it stays.
+write(book, "h/s.txt", "---\nowner: NE\nnote: |\n  check b\n  and c\n---\nHOH/a.ss01\n")
+a = apply(book, files=[dict(edit(book, "h/s.txt", laid(book, "h/s.txt")), status="wip", addNotes=["Tighter n?"])])
+assert a["files"] == [{"ok": True}], a
+assert read(book, "h/s.txt") == "---\nstatus: wip\nowner: NE\nnote: |\n  check b\n  and c\n  Tighter n?\n---\nHOH/a.ss01\n", repr(read(book, "h/s.txt"))
+apply(book, files=[dict(edit(book, "h/s.txt", laid(book, "h/s.txt")), status="done")])
+assert read(book, "h/s.txt").startswith("---\nstatus: done\nowner: NE\n")
+# Even when the text changed on disk since the layout, a status change alone is saved.
+apply(book, files=[dict(edit(book, "h/s.txt", "old", laid_text="old"), status="todo")])
+assert read(book, "h/s.txt") == "---\nowner: NE\nnote: |\n  check b\n  and c\n  Tighter n?\n---\nHOH/a.ss01\n"
+# A one-line note, and a page with no header at all.
+write(book, "h/t.txt", "---\nnote: Hi.\nowner: NE\n---\nabc\n")
+apply(book, files=[dict(edit(book, "h/t.txt", "abc"), addNotes=["Two\nlines"])])
+assert read(book, "h/t.txt") == "---\nnote: |\n  Hi.\n  Two\n  lines\nowner: NE\n---\nabc\n", repr(read(book, "h/t.txt"))
+write(book, "h/u.txt", "abc\n")
+apply(book, files=[dict(edit(book, "h/u.txt", "abd"), status="done", addNotes=["ok"])])
+assert read(book, "h/u.txt") == "---\nstatus: done\nnote: |\n  ok\n---\nabd\n", repr(read(book, "h/u.txt"))
+apply(book, files=[dict(edit(book, "h/u.txt", "abd"), status="todo")])
+assert read(book, "h/u.txt") == "---\nnote: |\n  ok\n---\nabd\n"
+w = write(book, "h/v.txt", "---\nstatus: wip\n---\nabc\n")
+apply(book, files=[dict(edit(book, "h/v.txt", "abc"), status="todo")])
+assert read(book, "h/v.txt") == "abc\n"
+# A new frame with a status colour and a comment.
+apply(book, files=[{"path": "h/new.txt", "from": None, "laid": None, "text": "x", "status": "wip", "addNotes": ["c"]}])
+assert read(book, "h/new.txt") == "---\nstatus: wip\nnote: |\n  c\n---\nx\n"
+a = apply(book, files=[dict(edit(book, "h/v.txt", "abc"), status="maybe")])
+assert not a["files"][0]["ok"]
+pages = {p["path"]: p for p in ask({"op": "proofbook", "folder": book})["pages"]}
+assert (pages["h/t.txt"]["status"], pages["h/t.txt"]["note"]) == ("todo", "Hi.\nTwo\nlines"), pages["h/t.txt"]
+assert (pages["h/new.txt"]["status"], pages["h/new.txt"]["note"]) == ("wip", "c")
+
 assert not ask({"op": "proofbook-apply", "folder": book + "-missing"})["ok"]
 print("proof-book saving: all checks passed")
