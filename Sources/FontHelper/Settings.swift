@@ -3,7 +3,7 @@ import Security
 
 enum Settings {
     static let port: UInt16 = 7337
-    static let version = "1.2.0"
+    static let version = "1.3.0"
 
     private static let defaults = UserDefaults.standard
 

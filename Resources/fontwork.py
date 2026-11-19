@@ -42,7 +42,7 @@ Request:
 Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain text to set in Figma.
   {"id": 3, "ok": true, "folder": ..., "name": "<folder name>",
    "pages": [{"path": "01-Latin-LC/a-z.txt", "section": "01-Latin-LC", "name": "a-z", "text": "...",
-              "untypable": ["a.ss01", ...]}, ...],
+              "untypable": ["a.ss01", ...], "status": "todo" | "wip" | "done" | ..., "note": "..."}, ...],
    "skipped": [{"path": ..., "reason": "not downloaded" | "..."}],
    "empty": ["03-New", ...],   (folders with nothing in them, joined with " / " like "section")
    "styles": <figma-styles.json beside the pages, or null>}
@@ -56,7 +56,8 @@ Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain t
 Request:
   {"id": 4, "op": "proofbook-apply", "folder": "/Users/.../proofbook",
    "files": [{"path": "01-Latin-LC/a-z.txt", "from": "<path it had>" | null,
-              "laid": "<text it was laid out with>" | null, "text": "<text now>"}],
+              "laid": "<text it was laid out with>" | null, "text": "<text now>",
+              "status": "wip" (optional: todo, wip or done), "addNotes": ["..."] (optional)}],
    "trash": ["01-Latin-LC/old.txt"], "folders": ["01-Latin-LC", "02-New"], "goneFolders": ["03-Old"]}
 
 Answer (for figma-proofbook): makes the folder match the Figma page. Each section is a folder and
@@ -71,7 +72,10 @@ moved or deleted file or folder.
   edited, glyph names and all; an edited line is written as typed. A page where an edited line
   held a name that can't be typed (/a.ss01, shown as a space) is left alone too, since writing it
   would lose the name. So is a page whose new path is taken, or used twice. "trash" pages and
-  "goneFolders" (once nothing but .DS_Store is left in them) go to the Trash. Every folder in
+  "goneFolders" (once nothing but .DS_Store is left in them) go to the Trash. "status" sets the
+  header's status line (todo takes it away) and "addNotes" are added to the end of its note;
+  when the text itself is unchanged, only the header is touched, whatever happened to the text on
+  disk. Every other header line stays as it is. Every folder in
   "folders" is made if it isn't there.
 """
 import sys, os, re, json, base64, io, traceback, unicodedata, difflib, shutil
@@ -409,17 +413,6 @@ SF_DATALESS = 0x40000000   # macOS: an iCloud file whose contents are not on thi
 GLYPH_NAME = re.compile(r"/([A-Za-z_][A-Za-z0-9._-]*) ?")
 
 
-def proof_text(raw):
-    """The proof text of a page: ProofBook's header (line 1 is ---, up to the next ---) left out.
-    A header that never closes is proof text, as ProofBook reads it."""
-    lines = raw.split("\n")
-    if lines and lines[0].rstrip("\r") == "---":
-        for i in range(1, len(lines)):
-            if lines[i].rstrip("\r") == "---":
-                return "\n".join(lines[i + 1:])
-    return raw
-
-
 def glyph_char(name):
     """The character a glyph name stands for, or None when it can't be typed (an alternate,
     a ligature, a name with a suffix)."""
@@ -448,6 +441,78 @@ def split_page(raw):
                 head = "\n".join(lines[:i + 1]) + "\n"
                 return head, raw[len(head):]
     return "", raw
+
+
+STATUSES = ("todo", "wip", "done")
+
+
+def _header_lines(head):
+    """The lines between a header's two --- lines."""
+    return head.split("\n")[1:-2] if head else []
+
+
+def _note_span(lines):
+    """(start, end) of the note in header lines, or None. A note is `note: text` on one line or
+    `note: |` followed by indented lines, as ProofBook writes it."""
+    for i, line in enumerate(lines):
+        if re.match(r"note\s*:", line):
+            j = i + 1
+            if re.match(r"note\s*:\s*[|>][-+]?\s*$", line):
+                while j < len(lines) and (lines[j].startswith((" ", "\t")) or not lines[j].strip()):
+                    j += 1
+                while j > i + 1 and not lines[j - 1].strip():
+                    j -= 1
+            return i, j
+    return None
+
+
+def header_fields(head):
+    """(status, note) from a page's header: status is todo when there is none."""
+    lines = _header_lines(head)
+    status = "todo"
+    for line in lines:
+        m = re.match(r"status\s*:\s*(.*?)\s*$", line)
+        if m:
+            status = m.group(1).strip("'\"").lower() or "todo"
+    note = ""
+    span = _note_span(lines)
+    if span:
+        i, j = span
+        first = lines[i].split(":", 1)[1].strip()
+        if j > i + 1 or re.match(r"[|>]", first):
+            body = lines[i + 1:j]
+            indent = min((len(l) - len(l.lstrip()) for l in body if l.strip()), default=0)
+            note = "\n".join(l[indent:] for l in body)
+        else:
+            note = first.strip("'\"")
+    return status, note
+
+
+def set_header(head, status=None, add_notes=None):
+    """The header with its status set (todo takes the line away) and notes added to the end of
+    its note. Every other line stays exactly as it was. "" when nothing is left in it."""
+    lines = _header_lines(head)
+    if status is not None:
+        at = [i for i, l in enumerate(lines) if re.match(r"status\s*:", l)]
+        if status == "todo":
+            lines = [l for i, l in enumerate(lines) if i not in at]
+        elif at:
+            lines[at[0]] = "status: " + status
+        else:
+            lines.insert(0, "status: " + status)
+    if add_notes:
+        old = header_fields("---\n" + "\n".join(lines) + "\n---\n")[1] if lines else ""
+        parts = ([old] if old else []) + [n.strip() for n in add_notes if n.strip()]
+        note = "\n".join(parts)
+        block = ["note: |"] + ["  " + l if l.strip() else "" for l in note.split("\n")]
+        span = _note_span(lines)
+        if span:
+            lines[span[0]:span[1]] = block
+        else:
+            lines += block
+    if not [l for l in lines if l.strip()]:
+        return ""
+    return "---\n" + "\n".join(lines) + "\n---\n"
 
 
 def merge_edit(body, laid, edited):
@@ -565,22 +630,30 @@ def proofbook_apply(req):
                 raise Skip("two frames have this name")
             target = page_path(root, f.get("path"))
             text = (f.get("text") or "").replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n")
+            status = f.get("status")
+            if status is not None and status not in STATUSES:
+                raise Skip(f"unknown status {status}")
+            notes = f.get("addNotes") or []
             if f.get("from"):
                 source = page_path(root, f["from"])
                 head, body, crlf = read_page(source)
-                new_body, reason = merge_edit(body, f.get("laid") or "", text)
-                if new_body is None:
-                    raise Skip(reason)
+                if text.rstrip() == (f.get("laid") or "").rstrip() and (status or notes):
+                    new_body = body   # only the header changes: the text stays as it is on disk
+                else:
+                    new_body, reason = merge_edit(body, f.get("laid") or "", text)
+                    if new_body is None:
+                        raise Skip(reason)
+                new_head = set_header(head, status, notes) if (status or notes) else head
                 content = None
-                if new_body != body:
-                    content = head + new_body
+                if new_body != body or new_head != head:
+                    content = new_head + new_body
                     if crlf:
                         content = content.replace("\n", "\r\n")
                 plans.append((i, target, source, content))
                 if source != target:
                     vacated.add(source)
             else:
-                plans.append((i, target, None, text.rstrip() + "\n"))
+                plans.append((i, target, None, set_header("", status, notes) + text.rstrip() + "\n"))
         except Skip as e:
             results[i] = {"ok": False, "reason": str(e)}
     moving = {source for _, _, source, _ in plans if source}
@@ -673,10 +746,13 @@ def proofbook(req):
             skipped.append({"path": rel, "reason": str(e)})
             continue
         untypable = []
-        text = typed(proof_text(raw.replace("\r\n", "\n")), untypable)
+        head, body = split_page(raw.replace("\r\n", "\n"))
+        text = typed(body, untypable)
+        status, note = header_fields(head)
         section = os.path.dirname(rel)
         pages.append({"path": rel, "section": section.replace(os.sep, " / "),
-                      "name": os.path.basename(rel)[:-4], "text": text, "untypable": untypable})
+                      "name": os.path.basename(rel)[:-4], "text": text, "untypable": untypable,
+                      "status": status, "note": note})
     styles = None
     sp = os.path.join(folder, PROOFBOOK_STYLES)
     if os.path.isfile(sp):
