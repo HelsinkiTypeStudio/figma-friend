@@ -37,7 +37,7 @@ Answer (for glyph lists): every character the first readable file maps, grouped 
   Invisible codepoints (controls, private use, line and paragraph separators) are skipped.
 
 Request:
-  {"id": 3, "op": "proofbook", "folder": "/Users/.../proofbook"}
+  {"id": 3, "op": "proofbook", "folder": "/Users/.../proofbook", "fonts": ["/Users/.../Maamme TEST0016.otf"]}
 
 Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain text to set in Figma.
   {"id": 3, "ok": true, "folder": ..., "name": "<folder name>",
@@ -45,7 +45,8 @@ Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain t
               "untypable": ["a.ss01", ...]}, ...],
    "skipped": [{"path": ..., "reason": "not downloaded" | "..."}],
    "empty": ["03-New", ...],   (folders with nothing in them, joined with " / " like "section")
-   "styles": <figma-styles.json beside the pages, or null>}
+   "styles": <figma-styles.json beside the pages, or null>,
+   "hiddenCodes": 37}   (how many glyphs the fonts give hidden codes, see below)
 
   A page is any .txt file in the folder or a folder inside it, in alphabetical order. Its
   ProofBook header (line 1 is ---, up to the next ---) is left out. Glyphs-style glyph names
@@ -53,8 +54,14 @@ Answer (for figma-proofbook): every proof-page in a ProofBook folder, as plain t
   (an alternate such as /a.ss01) becomes a space and is listed in "untypable". Files iCloud
   has not downloaded are skipped rather than read, since reading one can hang.
 
+  Hidden codes: Export Test Font gives every glyph without a Unicode value a code in Unicode's
+  private use plane 15 (U+F0000 to U+FFFFD), and keeps the glyph names as in Glyphs. "fonts" are
+  the installed files of the test build; a glyph name found there (/six.lf, /a.ss01, /f_f)
+  becomes its hidden code, so Figma shows exactly that glyph. Saving turns the codes back into
+  glyph names.
+
 Request:
-  {"id": 4, "op": "proofbook-apply", "folder": "/Users/.../proofbook",
+  {"id": 4, "op": "proofbook-apply", "folder": "/Users/.../proofbook", "fonts": [...],
    "files": [{"path": "01-Latin-LC/a-z.txt", "from": "<path it had>" | null,
               "laid": "<text it was laid out with>" | null, "text": "<text now>"}],
    "trash": ["01-Latin-LC/old.txt"], "folders": ["01-Latin-LC", "02-New"], "goneFolders": ["03-Old"]}
@@ -420,23 +427,59 @@ def proof_text(raw):
     return raw
 
 
-def glyph_char(name):
-    """The character a glyph name stands for, or None when it can't be typed (an alternate,
-    a ligature, a name with a suffix)."""
+HIDDEN_FIRST, HIDDEN_LAST = 0xF0000, 0xFFFFD
+
+
+def hidden_codes(paths):
+    """{glyph name: hidden code as a character} from the test build's installed files."""
+    found = {}
+    for path in paths or []:
+        try:
+            font = TTFont(path, lazy=True, fontNumber=0)
+            cmap = font.getBestCmap() or {}
+        except Exception:
+            continue
+        for cp, name in cmap.items():
+            if HIDDEN_FIRST <= cp <= HIDDEN_LAST:
+                found.setdefault(name, chr(cp))
+    return found
+
+
+def glyph_char(name, hidden=None):
+    """The character a glyph name stands for: its Unicode character, else its hidden code in the
+    test build, else None when it can't be typed (an alternate in a font without hidden codes)."""
+    if hidden and name in hidden:
+        return hidden[name]
     if "." in name:
         return None
     u = agl.toUnicode(name)
     return u if len(u) == 1 else None
 
 
-def typed(text, untypable):
+def typed(text, untypable, hidden=None):
     def one(m):
-        c = glyph_char(m.group(1))
+        c = glyph_char(m.group(1), hidden)
         if c is None:
             untypable.append(m.group(1))
             return " "
         return c
     return GLYPH_NAME.sub(one, text)
+
+
+def named(line, hidden):
+    """A line typed in Figma with its hidden codes written as glyph names again (/six.lf). A space
+    ends a name, as in Glyphs, unless the line ends there or another name follows."""
+    names = {c: n for n, c in (hidden or {}).items()}
+    out = []
+    for i, c in enumerate(line):
+        if c not in names:
+            out.append(c)
+            continue
+        out.append("/" + names[c])
+        after = line[i + 1] if i + 1 < len(line) else ""
+        if after and after != "/" and after not in names:
+            out.append(" ")
+    return "".join(out)
 
 
 def split_page(raw):
@@ -450,14 +493,20 @@ def split_page(raw):
     return "", raw
 
 
-def merge_edit(body, laid, edited):
+def merge_edit(body, laid, edited, hidden=None):
     """The new proof text, or (None, reason). Untouched lines are kept exactly as in the file."""
     core = body.rstrip()
     tail = body[len(core):]
     original = core.split("\n")
-    shown = [typed(line, []) for line in original]
-    if "\n".join(shown) != laid.rstrip():
-        return None, "changed on disk since it was laid out"
+    codes = hidden
+    shown = [typed(line, [], hidden) for line in original]
+    if "\n".join(shown).rstrip() != laid.rstrip():
+        # A frame laid out before the font had hidden codes shows those glyphs as spaces.
+        hidden = None
+        shown = [typed(line, []) for line in original]
+        if "\n".join(shown).rstrip() != laid.rstrip():
+            return None, "changed on disk since it was laid out"
+    shown[-1] = shown[-1].rstrip()   # Figma's text is trimmed at the end, as the layout was
     edited = edited.replace("\u2028", "\n").replace("\r\n", "\n").replace("\r", "\n").rstrip()
     new = edited.split("\n")
     out, lost = [], []
@@ -468,8 +517,8 @@ def merge_edit(body, laid, edited):
             continue
         if tag == "replace":
             for line in original[i1:i2]:
-                typed(line, lost)
-        out += new[j1:j2]
+                typed(line, lost, hidden)
+        out += [named(line, codes) for line in new[j1:j2]]
     if lost:
         return None, "an edited line had " + ", ".join("/" + n for n in lost) + ", which can't be typed in Figma"
     return "\n".join(out) + tail, None
@@ -539,6 +588,7 @@ def proofbook_apply(req):
         return {"ok": False, "error": f"no folder at {folder}"}
     root = os.path.realpath(folder)
     files = req.get("files") or []
+    hidden = hidden_codes(req.get("fonts"))
     results = [None] * len(files)
     skipped, trashed = [], []
 
@@ -568,7 +618,7 @@ def proofbook_apply(req):
             if f.get("from"):
                 source = page_path(root, f["from"])
                 head, body, crlf = read_page(source)
-                new_body, reason = merge_edit(body, f.get("laid") or "", text)
+                new_body, reason = merge_edit(body, f.get("laid") or "", text, hidden)
                 if new_body is None:
                     raise Skip(reason)
                 content = None
@@ -580,7 +630,7 @@ def proofbook_apply(req):
                 if source != target:
                     vacated.add(source)
             else:
-                plans.append((i, target, None, text.rstrip() + "\n"))
+                plans.append((i, target, None, "\n".join(named(l, hidden) for l in text.rstrip().split("\n")) + "\n"))
         except Skip as e:
             results[i] = {"ok": False, "reason": str(e)}
     moving = {source for _, _, source, _ in plans if source}
@@ -660,6 +710,7 @@ def proofbook(req):
             if f.lower().endswith(".txt") and not f.startswith("."):
                 found.append(os.path.relpath(os.path.join(root, f), folder))
     found.sort(key=lambda p: [part.casefold() for part in p.split(os.sep)])
+    hidden = hidden_codes(req.get("fonts"))
     pages, skipped = [], []
     for rel in found:
         path = os.path.join(folder, rel)
@@ -673,7 +724,7 @@ def proofbook(req):
             skipped.append({"path": rel, "reason": str(e)})
             continue
         untypable = []
-        text = typed(proof_text(raw.replace("\r\n", "\n")), untypable)
+        text = typed(proof_text(raw.replace("\r\n", "\n")), untypable, hidden)
         section = os.path.dirname(rel)
         pages.append({"path": rel, "section": section.replace(os.sep, " / "),
                       "name": os.path.basename(rel)[:-4], "text": text, "untypable": untypable})
@@ -686,7 +737,8 @@ def proofbook(req):
         except (OSError, ValueError) as e:
             styles = {"error": f"{PROOFBOOK_STYLES} could not be read: {e}"}
     return {"ok": True, "folder": folder, "name": os.path.basename(os.path.normpath(folder)),
-            "pages": pages, "skipped": skipped, "empty": sorted(empty, key=str.casefold), "styles": styles}
+            "pages": pages, "skipped": skipped, "empty": sorted(empty, key=str.casefold), "styles": styles,
+            "hiddenCodes": len(hidden)}
 
 
 def main():
