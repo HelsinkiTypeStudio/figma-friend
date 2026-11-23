@@ -26,4 +26,9 @@ enum FontLookup {
         add([kCTFontFamilyNameAttribute as String: family], mandatory: [kCTFontFamilyNameAttribute])
         return out
     }
+
+    /// Every installed file of a family, whatever its styles.
+    static func files(family: String) -> [String] {
+        candidates(family: family, style: "").compactMap { $0["path"] as? String }
+    }
 }

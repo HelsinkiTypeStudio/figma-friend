@@ -13,11 +13,14 @@ import Network
 ///                              subset font, see Resources/fontwork.py
 ///   POST /fonts/charset        body {"family", "style"}: every character the font maps, grouped
 ///                              for a glyph list, see Resources/fontwork.py
-///   POST /proofbook            body {"book", "family", "choose"?}: every page of a proof-book folder,
-///                              chosen in a dialog the first time (or when "choose" is true) and
-///                              remembered by "book", the Figma file's id; see Resources/fontwork.py.
-///                              {"cancelled": true} if no folder was chosen
-///   POST /proofbook/save       body {"book", "files", "trash", "folders", "goneFolders"}: makes the
+///   POST /proofbook            body {"book", "family", "choose"?, "fontFamilies"?}: every page of a
+///                              proof-book folder, chosen in a dialog the first time (or when "choose"
+///                              is true) and remembered by "book", the Figma file's id; glyph names
+///                              become the hidden codes of the installed "fontFamilies" (the test
+///                              build); see Resources/fontwork.py. {"cancelled": true} if no folder
+///                              was chosen
+///   POST /proofbook/save       body {"book", "files", "trash", "folders", "goneFolders",
+///                              "fontFamilies"?}: makes the
 ///                              folder remembered for "book" match the Figma page (new, renamed,
 ///                              moved, edited and deleted pages and folders; deleted ones go to the
 ///                              Trash); see Resources/fontwork.py
@@ -257,12 +260,13 @@ final class Server {
               let book = req["book"] as? String, !book.isEmpty
         else { return json(conn, ["error": "book is required"], "400 Bad Request") }
         let family = (req["family"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "this Figma file"
+        let fonts = fontFiles(req)
 
         let known = Settings.proofbookFolder(book: book)
         if let folder = known, (req["choose"] as? Bool) != true {
             var isDir: ObjCBool = false
             if FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue {
-                return readProofbook(conn, folder, family: family)
+                return readProofbook(conn, folder, family: family, fonts: fonts)
             }
         }
         Dialogs.chooseProofbook(family: family, current: known) { [weak self] url in
@@ -272,12 +276,23 @@ final class Server {
             }
             Settings.setProofbookFolder(url, book: book)
             Log.write("proof-book for \(family): \(url.path)")
-            self?.readProofbook(conn, url, family: family)
+            self?.readProofbook(conn, url, family: family, fonts: fonts)
         }
     }
 
-    private func readProofbook(_ conn: NWConnection, _ folder: URL, family: String) {
-        Worker.shared.ask(["op": "proofbook", "folder": folder.path]) { [weak self] result in
+    /// The installed files of the families a request names: the test build the proof is set in,
+    /// whose hidden codes stand for glyphs without a Unicode value.
+    private func fontFiles(_ req: [String: Any]) -> [String] {
+        let families = req["fontFamilies"] as? [String] ?? []
+        var files: [String] = []
+        for family in families where !family.isEmpty {
+            for path in FontLookup.files(family: family) where !files.contains(path) { files.append(path) }
+        }
+        return files
+    }
+
+    private func readProofbook(_ conn: NWConnection, _ folder: URL, family: String, fonts: [String]) {
+        Worker.shared.ask(["op": "proofbook", "folder": folder.path, "fonts": fonts]) { [weak self] result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let data):
@@ -300,7 +315,7 @@ final class Server {
         guard let folder = Settings.proofbookFolder(book: book) else {
             return json(conn, ["ok": false, "error": "this Figma file has no proof-book folder yet; lay it out first"])
         }
-        var ask: [String: Any] = ["op": "proofbook-apply", "folder": folder.path]
+        var ask: [String: Any] = ["op": "proofbook-apply", "folder": folder.path, "fonts": fontFiles(req)]
         for k in ["files", "trash", "folders", "goneFolders"] { ask[k] = req[k] as? [Any] ?? [] }
         Worker.shared.ask(ask) { [weak self] result in
             DispatchQueue.main.async {
